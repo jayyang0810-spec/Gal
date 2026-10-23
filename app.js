@@ -68,12 +68,13 @@ function remapImportedScenes(scenes){
 async function importScriptFile(file){
  const raw=await file.text();let incoming;
  if(file.name.toLowerCase().endsWith('.json')){
-  const data=JSON.parse(raw);
+  let data;try{data=JSON.parse(raw.replace(/^\uFEFF/,''))}catch(err){const nearEnd=/Unterminated string|Unexpected end|end of JSON|Expected ',' or '}' after property value/.test(err.message);throw Error((nearEnd?'JSON 檔案可能被截斷或文字引號未結束。原檔不會被修改，請重新匯出完整 JSON，或上傳檔案讓我檢查。':'JSON 格式不正確，請確認是完整的 JSON 專案。')+' 原始錯誤：'+err.message)}
   if(Array.isArray(data.scenes))incoming={title:data.title||file.name.replace(/\.json$/i,''),scenes:data.scenes,characters:Array.isArray(data.characters)?data.characters:[],snapshots:[]};
   else if(Array.isArray(data))incoming={title:file.name.replace(/\.json$/i,''),scenes:data,characters:[],snapshots:[]};
   else throw Error('JSON 必須包含 scenes 陣列');
  }else incoming={title:file.name.replace(/\.(txt|md)$/i,''),scenes:parseTextScript(raw),characters:[],snapshots:[]};
  if(!incoming.scenes.length)throw Error('沒有找到可匯入的場景');
+ if(!incoming.scenes.every(x=>x&&typeof x==='object'))throw Error('場景資料格式不正確，未修改現有劇本');
  const asNew=confirm('建立獨立的新遊戲劇本？\n確定：新劇本\n取消：加入目前劇本');
  const imported=remapImportedScenes(incoming.scenes);
  if(asNew){
