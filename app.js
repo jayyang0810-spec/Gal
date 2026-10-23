@@ -38,11 +38,52 @@ function drawNodeChoices(){const root=$('#nodeChoices');if(!root)return;const s=
 async function applyNodeImages(m){const stage=$('#stage');if(!stage)return;const media=ensureMedia().find(x=>x.id===m.background);if(media){const blob=await dbGet('assets','media:'+projectId+':'+media.id);if(blob){const url=URL.createObjectURL(blob);stage.style.backgroundImage='url("'+url+'")';stage.dataset.imageUrl=url}}}
 
 
-/* 2.4 — visible script import on the main workspace */
-function importScriptControls(){const main=document.querySelector('main');if(!main||document.getElementById('scriptImportBar'))return;const bar=document.createElement('section');bar.id='scriptImportBar';bar.className='panel';bar.style.marginBottom='12px';bar.innerHTML='<div class="row"><strong>📥 導入劇本</strong><span class="muted">支援 .json / .txt / .md；可匯入為新遊戲或加入目前劇本</span><input id="scriptImportFile" type="file" accept=".json,.txt,.md,application/json,text/plain,text/markdown"><button id="scriptImportHelp">格式說明</button></div>';main.prepend(bar);document.getElementById('scriptImportFile').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{await importScriptFile(file)}catch(err){alert('導入失敗：'+err.message)}finally{e.target.value=''}};document.getElementById('scriptImportHelp').onclick=()=>alert('TXT / Markdown 範例：\n## 第一幕\n旁白：故事開始。\n芽衣：早安！\n\n## 第二幕\n旁白：來到新的場景。\n\nJSON 可匯入由本網站匯出的專案備份。')}
-function normalizeImportScenes(scenes){if(!Array.isArray(scenes)||!scenes.length)throw Error('劇本沒有場景');return scenes.map((s,i)=>({id:typeof s.id==='string'&&s.id?'import_'+uid():'import_'+uid(),name:String(s.name||s.title||'場景 '+(i+1)),script:String(s.script||s.content||s.text||'')}))}
-function parseTextScript(content){const lines=content.replace(/\r\n?/g,'\n').split('\n');const chunks=[];let currentScene=null;for(const line of lines){const m=line.match(/^\s*(?:#{1,3}\s+|【)(.+?)(?:】)?\s*$/);if(m){if(currentScene)chunks.push(currentScene);currentScene={name:m[1].trim(),lines:[]}}else{if(!currentScene)currentScene={name:'第一幕',lines:[]};currentScene.lines.push(line)}}if(currentScene)chunks.push(currentScene);return chunks.filter(x=>x.lines.some(v=>v.trim())).map((x,i)=>({id:'import_'+uid(),name:x.name||'場景 '+(i+1),script:x.lines.join('\n').trim()}))}
-async function importScriptFile(file){const raw=await file.text();let incoming;if(file.name.toLowerCase().endsWith('.json')){const data=JSON.parse(raw);if(Array.isArray(data.scenes)){incoming={title:data.title||file.name.replace(/\.json$/i,''),scenes:data.scenes.map(s=>({...s})),characters:Array.isArray(data.characters)?data.characters:[],snapshots:Array.isArray(data.snapshots)?data.snapshots:[]}}}else if(Array.isArray(data)){incoming={title:file.name.replace(/\.json$/i,''),scenes:data,characters:[],snapshots:[]}}if(!incoming)throw Error('JSON 必須包含 scenes 陣列')}else{incoming={title:file.name.replace(/\.(txt|md)$/i,''),scenes:parseTextScript(raw),characters:[],snapshots:[]}}if(!incoming.scenes.length)throw Error('沒有找到可匯入的劇情內容');const createNew=confirm('要將「'+incoming.title+'」導入為【新的遊戲劇本】嗎？\n\n按「確定」：建立獨立新劇本（建議）\n按「取消」：加入目前劇本的場景');if(createNew){clearTimeout(saveTimer);await persistProject();const id='p'+uid();incoming.scenes=remapImportedScenes(incoming.scenes);incoming.title=prompt('新劇本名稱',incoming.title)||incoming.title;catalog.push({id,title:incoming.title,created:new Date().toISOString()});await dbPut('data','project:'+id,incoming);await dbPut('data','project_catalog',catalog);projectId=id;project=incoming;active=project.scenes[0].id;await dbPut('data','active_project_id',id)}else{const imported=remapImportedScenes(incoming.scenes);project.scenes.push(...imported);active=imported[0].id;save()}line=0;history=[];render();alert('導入完成：'+incoming.scenes.length+' 個場景。')}
-function remapImportedScenes(scenes){const ids=new Map(scenes.map(s=>[String(s.id||''),'s'+uid()]));return scenes.map((s,i)=>{const id=ids.get(String(s.id||''))||'s'+uid();let script=String(s.script||s.content||s.text||'');script=script.replace(/\[jump:([^\]]+)\]/g,(full,target)=>'[jump:'+(ids.get(target)||target)+']').replace(/->([^|\]]+)/g,(full,target)=>'->'+(ids.get(target)||target));return{id,name:String(s.name||s.title||'場景 '+(i+1)),script}})}
+
+/* 2.4 — script import */
+function importScriptControls(){
+ const main=document.querySelector('main');if(!main||document.getElementById('scriptImportBar'))return;
+ const bar=document.createElement('section');bar.id='scriptImportBar';bar.className='panel';bar.style.marginBottom='12px';
+ bar.innerHTML='<div class="row"><strong>📥 導入劇本</strong><span class="muted">JSON / TXT / MD，可建立新劇本或加入目前劇本</span><input id="scriptImportFile" type="file" accept=".json,.txt,.md,application/json,text/plain,text/markdown"><button id="scriptImportHelp">格式說明</button></div>';
+ main.prepend(bar);
+ document.getElementById('scriptImportFile').onchange=async e=>{const file=e.target.files?.[0];if(!file)return;try{await importScriptFile(file)}catch(err){alert('導入失敗：'+err.message)}finally{e.target.value=''}};
+ document.getElementById('scriptImportHelp').onclick=()=>alert('TXT / Markdown 範例：\n## 第一幕\n旁白：故事開始。\n芽衣：早安！\n\n## 第二幕\n旁白：來到新的場景。\n\nJSON 支援本網站匯出的專案備份。');
+}
+function parseTextScript(content){
+ const lines=content.replace(/\r\n?/g,'\n').split('\n'),chunks=[];let scene=null;
+ for(const line of lines){const match=line.match(/^\s*(?:#{1,3}\s+(.+)|【(.+)】)\s*$/);
+  if(match){if(scene)chunks.push(scene);scene={name:(match[1]||match[2]).trim(),lines:[]}}
+  else{if(!scene)scene={name:'第一幕',lines:[]};scene.lines.push(line)}
+ }
+ if(scene)chunks.push(scene);
+ return chunks.filter(c=>c.lines.some(l=>l.trim())).map((c,i)=>({id:'import_'+uid(),name:c.name||'場景 '+(i+1),script:c.lines.join('\n').trim()}));
+}
+function remapImportedScenes(scenes){
+ const ids=new Map(scenes.map((s,i)=>[String(s.id||'__'+i),'s'+uid()]));
+ return scenes.map((s,i)=>{const id=ids.get(String(s.id||'__'+i));let script=String(s.script||s.content||s.text||'');
+  script=script.replace(/\[jump:([^\]]+)\]/g,(all,target)=>'[jump:'+(ids.get(target)||target)+']')
+   .replace(/->([^|\]]+)/g,(all,target)=>'->'+(ids.get(target)||target));
+  return{id,name:String(s.name||s.title||'場景 '+(i+1)),script};
+ });
+}
+async function importScriptFile(file){
+ const raw=await file.text();let incoming;
+ if(file.name.toLowerCase().endsWith('.json')){
+  const data=JSON.parse(raw);
+  if(Array.isArray(data.scenes))incoming={title:data.title||file.name.replace(/\.json$/i,''),scenes:data.scenes,characters:Array.isArray(data.characters)?data.characters:[],snapshots:[]};
+  else if(Array.isArray(data))incoming={title:file.name.replace(/\.json$/i,''),scenes:data,characters:[],snapshots:[]};
+  else throw Error('JSON 必須包含 scenes 陣列');
+ }else incoming={title:file.name.replace(/\.(txt|md)$/i,''),scenes:parseTextScript(raw),characters:[],snapshots:[]};
+ if(!incoming.scenes.length)throw Error('沒有找到可匯入的場景');
+ const asNew=confirm('建立獨立的新遊戲劇本？\n確定：新劇本\n取消：加入目前劇本');
+ const imported=remapImportedScenes(incoming.scenes);
+ if(asNew){
+  clearTimeout(saveTimer);await persistProject();
+  const id='p'+uid();incoming.scenes=imported;incoming.title=prompt('新劇本名稱',incoming.title)||incoming.title;
+  catalog.push({id,title:incoming.title,created:new Date().toISOString()});
+  await dbPut('data','project:'+id,incoming);await dbPut('data','project_catalog',catalog);
+  projectId=id;project=incoming;active=imported[0].id;await dbPut('data','active_project_id',id);
+ }else{project.scenes.push(...imported);active=imported[0].id;save()}
+ line=0;history=[];render();alert('導入完成：'+imported.length+' 個場景');
+}
 const originalRenderForImport=render;
 render=function(){originalRenderForImport();importScriptControls()};
